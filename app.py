@@ -5,15 +5,19 @@ import torch.nn as nn
 import numpy as np
 import io
 import cv2
+import time
 from PIL import Image
 from flask import Flask, request, jsonify
+
 from tensorflow.keras.applications.efficientnet import preprocess_input as effnet_preprocess
 import torchvision.transforms as transforms
 from torchvision.models import resnet18, ResNet18_Weights
 
 app = Flask(__name__)
 
-# --- MODEL REGISTRY ---
+# =========================
+# MODEL REGISTRY
+# =========================
 MODEL_REGISTRY = {
     'fphl': {
         'model_path': 'models/female_pattern_hairloss/fphl model.pkl',
@@ -39,10 +43,15 @@ MODEL_REGISTRY = {
     }
 }
 
+# =========================
+# CACHE MEMORY (IMPORTANT)
+# =========================
 loaded_models = {}
 extractors = {}
 
-# --- LOAD MODEL ---
+# =========================
+# LOAD MODEL (CACHE SAFE)
+# =========================
 def get_model(disease):
     if disease not in loaded_models:
         path = MODEL_REGISTRY[disease]['model_path']
@@ -50,19 +59,35 @@ def get_model(disease):
             loaded_models[disease] = pickle.load(f)
     return loaded_models[disease]
 
-# --- RESNET EXTRACTOR (LIGHTWEIGHT SAFE) ---
+# =========================
+# RESNET EXTRACTOR (FAST + SAFE)
+# =========================
 def get_extractor(name):
     if name not in extractors:
-        model = resnet18(weights=None)   # ⚠️ safe for Railway
+        model = resnet18(weights=ResNet18_Weights.DEFAULT)
         model.fc = nn.Identity()
         model.eval()
         extractors[name] = model
     return extractors[name]
 
-# --- ROUTE ---
+# =========================
+# PRELOAD MODELS ON START (VERY IMPORTANT)
+# =========================
+for d in MODEL_REGISTRY:
+    try:
+        get_model(d)
+        print(f"Loaded: {d}")
+    except Exception as e:
+        print(f"Model load failed {d}: {e}")
+
+# =========================
+# ROUTE
+# =========================
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
+        start = time.time()
+
         if 'image' not in request.files or 'disease' not in request.form:
             return jsonify({"success": False, "error": "Send image + disease"}), 400
 
@@ -74,7 +99,6 @@ def predict():
         config = MODEL_REGISTRY[disease]
         model = get_model(disease)
 
-        # IMPORTANT: read ONCE
         file_bytes = request.files['image'].read()
 
         # =========================
@@ -120,7 +144,8 @@ def predict():
 
             with torch.no_grad():
                 extractor = get_extractor(config['extractor_type'])
-                features = extractor(tensor_img).numpy()
+                features = extractor(tensor_img)
+                features = features.cpu().numpy()
 
             raw_id = int(model.predict(features)[0])
 
@@ -149,6 +174,8 @@ def predict():
                 1: "Melanoma Detected (Malignant)"
             }
 
+        print("TIME TAKEN:", time.time() - start)
+
         return jsonify({
             "success": True,
             "prediction": labels.get(raw_id, "Unknown"),
@@ -163,7 +190,7 @@ def predict():
 
 
 # =========================
-# RAILWAY ENTRY POINT FIX
+# ENTRY POINT
 # =========================
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
