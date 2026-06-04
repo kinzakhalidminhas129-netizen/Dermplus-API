@@ -3,3 +3,7 @@ gunicorn
 numpy
 pillow
 scikit-learn
+torch
+torchvision
+opencv-python-headless
+tensorflow
