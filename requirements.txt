@@ -1,7 +1,7 @@
-flask
+flask==3.0.0
 gunicorn
 numpy
-pillow
+Pillow
 scikit-learn
 torch
 torchvision
